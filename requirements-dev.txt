@@ -1,0 +1,11 @@
+# 本番用のライブラリを全て含める
+-r requirements.txt
+
+# ホットリロードなど、開発を便利にするためのライブラリ
+uvicorn[standard]
+black
+ruff
+
+#test
+pytest
+httpx
