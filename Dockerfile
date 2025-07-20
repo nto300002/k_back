@@ -31,7 +31,7 @@ EXPOSE 8080
 
 # 本番サーバー(gunicorn)を起動するコマンド
 # Cloud Runのベストプラクティスに従い、ポート8080で起動
-CMD ["gunicorn", "-w", "4", "-k", "uvicorn.workers.UvicornWorker", "-b", "0.0.0.0:8080", "app.main:app"]
+CMD exec gunicorn -w 1 -k uvicorn.workers.UvicornWorker -b "0.0.0.0:${PORT}" app.main:app
 
 
 # --- ステージ 3: development ---
