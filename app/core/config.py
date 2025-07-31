@@ -6,15 +6,15 @@ class Settings(BaseSettings):
     .envファイルから環境変数を読み込み、型を検証します。
     """
     # model_configは、.envファイルの場所などをPydanticに教えるための設定です
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8')
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
-    DATABASE_URL: str
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
     BACKEND_CORS_ORIGINS: list[str] = ["http://localhost:3000"]
     
     # --- データベース設定 ---
     DATABASE_URL: str
+    TEST_DATABASE_URL: str
 
     # --- プロジェクト情報 ---
     PROJECT_NAME: str = "ケイカくん API"
