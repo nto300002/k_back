@@ -1,11 +1,25 @@
 # 本番用のライブラリを全て含める
 -r requirements.txt
 
-# ホットリロードなど、開発を便利にするためのライブラリ
-uvicorn[standard]
-black
-ruff
+# === 開発用ライブラリ ===
 
-#test
-pytest
-httpx
+# ホットリロードなど、開発を便利にするためのライブラリ
+uvicorn[standard]==0.35.0
+black==24.4.2
+ruff==0.5.5
+passlib==1.7.4
+bcrypt==4.0.0
+
+# テスト
+pytest==8.4.1
+httpx==0.28.1
+pytest-asyncio==1.1.0
+
+
+# マイグレーション, ORM
+alembic==1.16.4
+sqlalchemy==2.0.41
+asyncpg==0.30.0
+asyncio==3.4.3
+pydantic-settings==2.10.1
+pydantic[email]==2.11.7
