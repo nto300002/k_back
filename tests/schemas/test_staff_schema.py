@@ -3,7 +3,7 @@ from pydantic import ValidationError
 
 from app.schemas.token import Token
 from app.schemas.staff import LoginRequest, AdminSignupRequest, StaffInviteRequest
-from app.schemas.office import OfficeCreateRequest
+from app.schemas.office import OfficeCreate
 from app.models.enums import StaffRole, OfficeType
 
 # --- Token Schema Tests ---
@@ -63,20 +63,20 @@ def test_staff_invite_request_invalid_role():
         StaffInviteRequest(email="new_staff@example.com", role="invalid_role")
 
 
-# --- OfficeCreateRequest Schema Tests ---
+# --- OfficeCreate Schema Tests ---
 def test_valid_office_create_request():
-    """正常系: OfficeCreateRequestスキーマが正しく作成される"""
-    data = {"name": "新しい事業所", "office_type": "type_A_office"}
-    req = OfficeCreateRequest(**data)
+    """正常系: OfficeCreateスキーマが正しく作成される"""
+    data = {"name": "新しい事業所", "office_type": "type_A_office", "created_by": "123e4567-e89b-12d3-a456-426614174000", "last_modified_by": "123e4567-e89b-12d3-a456-426614174000"}
+    req = OfficeCreate(**data)
     assert req.name == data["name"]
     assert req.office_type == OfficeType.type_A_office
 
 def test_office_create_request_missing_name():
-    """異常系: OfficeCreateRequestで名前が欠落している"""
+    """異常系: OfficeCreateで名前が欠落している"""
     with pytest.raises(ValidationError, match="name"):
-        OfficeCreateRequest(office_type="type_A_office")
+        OfficeCreate(office_type="type_A_office")
 
 def test_office_create_request_missing_office_type():
-    """異常系: OfficeCreateRequestでoffice_typeが欠落している"""
+    """異常系: OfficeCreateでoffice_typeが欠落している"""
     with pytest.raises(ValidationError, match="office_type"):
-        OfficeCreateRequest(name="新しい事業所")
+        OfficeCreate(name="新しい事業所")
