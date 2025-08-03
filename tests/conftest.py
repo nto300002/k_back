@@ -2,27 +2,24 @@
 import pytest
 import pytest_asyncio
 from typing import AsyncGenerator, Generator
-from httpx import AsyncClient
+from httpx import AsyncClient, ASGITransport 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, AsyncEngine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text
 from typing import Optional
 
 import uuid
+from fastapi import HTTPException
 from app.main import app
 from app.db.base import Base
 from app.core.config import settings
 from app.api import deps
+from app.api.deps import get_current_active_user
 from app.services.security import get_password_hash
 import subprocess
 import asyncio
 import time
 from asyncpg.exceptions import InvalidCatalogNameError
-
-from app.models.staff import Staff
-from app.models.office import Office, OfficeStaff
-from app.models.enums import StaffRole, OfficeType, BillingStatus
-from app.services.security import get_password_hash
 
 from app.models.staff import Staff
 from app.models.office import Office, OfficeStaff
@@ -150,5 +147,52 @@ async def office_staff_factory(db_session: AsyncSession):
         return new_office_staff
 
     yield _create_office_staff
+
+
+# --- 4. テスト用の依存性オーバーライド関連フィクスチャ ---
+@pytest_asyncio.fixture
+async def async_client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+    """
+    テスト用のHTTPクライアント。
+    DBセッションの依存性をオーバーライドして、テスト用セッションを使用する。
+    """
+    # DBセッションの依存性をオーバーライド
+    async def override_get_db():
+        yield db_session
+    
+    app.dependency_overrides[deps.get_db] = override_get_db
+    
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        yield ac
+    
+    # テスト後にオーバーライドをクリア
+    app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+def mock_current_user(request):
+    """
+    認証済みユーザーをモックするためのフィクスチャ。
+    テスト関数で使用するユーザーを指定できる。
+    
+    使用方法:
+    @pytest.mark.parametrize("mock_current_user", [user_instance], indirect=True)
+    async def test_something(mock_current_user):
+        # テスト実行時にget_current_active_userがuser_instanceを返す
+    """
+    user = getattr(request, 'param', None)
+    
+    def override_get_current_user():
+        if user is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return user
+    
+    app.dependency_overrides[get_current_active_user] = override_get_current_user
+    
+    yield user
+    
+    # テスト後にオーバーライドをクリア
+    if get_current_active_user in app.dependency_overrides:
+        del app.dependency_overrides[get_current_active_user]
 
 
