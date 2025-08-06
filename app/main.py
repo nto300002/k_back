@@ -11,7 +11,6 @@ app = FastAPI(
 )
 
 # CORSミドルウェアの設定
-# これにより、フロントエンド(http://localhost:3000)からのリクエストが許可される
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
@@ -22,5 +21,4 @@ if settings.BACKEND_CORS_ORIGINS:
     )
 
 # APIルーターをインクルード
-# すべての /api/v1 で始まるパスがこのルーターに送られる
 app.include_router(api.api_router, prefix=settings.API_V1_STR)
