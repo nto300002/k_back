@@ -42,9 +42,6 @@ FROM base AS development
 COPY requirements-dev.txt .
 RUN pip install --no-cache-dir -r requirements-dev.txt
 
-# アプリケーションのソースコードをコピー
-COPY . .
-
 # 開発サーバー(uvicorn)を起動するコマンド
 # ホットリロードを有効にし、コンテナ外からアクセスできるよう0.0.0.0でリッスン
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
