@@ -29,7 +29,7 @@ class Staff(Base):
     __tablename__ = 'staffs'
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     name: Mapped[str] = mapped_column(String(255))
-    role: Mapped[StaffRole] = mapped_column(SQLAlchemyEnum(StaffRole), nullable=False)
+    role: Mapped[StaffRole] = mapped_column(SQLAlchemyEnum(StaffRole, name="staffrole"), nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
@@ -37,5 +37,5 @@ class Staff(Base):
     office_associations: Mapped[List["OfficeStaff"]] = relationship(back_populates="staff")
 
     offices: Mapped[List["Office"]] = relationship(
-        secondary="office_staffs", back_populates="staffs"
+        secondary="office_staffs", back_populates="staffs", viewonly=True
     )
