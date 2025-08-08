@@ -1,4 +1,6 @@
 from typing import List, Optional
+import uuid
+import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -16,10 +18,9 @@ class CRUDOffice(CRUDBase[Office, OfficeCreate, OfficeResponse]):
         self, db: AsyncSession, *, obj_in: OfficeCreate, user: Staff
     ) -> Office:
         """
-        Officeと、所有者(owner)との関連(OfficeStaff)を作成します。
-        この関数はセッションへのオブジェクト追加のみを行い、コミットは呼び出し元に委ねます。
+        Officeを作成し、作成者をOfficeStaffとして関連付けます。
         """
-        # Officeを作成
+        # Officeオブジェクトを作成
         db_office = Office(
             name=obj_in.name,
             office_type=obj_in.office_type,
@@ -27,17 +28,19 @@ class CRUDOffice(CRUDBase[Office, OfficeCreate, OfficeResponse]):
             last_modified_by=user.id,
         )
         db.add(db_office)
-        await db.flush()  # 関連付けのためにIDを確定させる
+        await db.flush()  # まずOfficeをDBにINSERTし、IDを確定させる
 
-        # 所有者との関連を作成
-        association = OfficeStaff(
-            staff_id=user.id, office_id=db_office.id, is_primary=True
+        # OfficeStaff関係を作成
+        office_staff = OfficeStaff(
+            staff_id=user.id,
+            office_id=db_office.id, # 確定したIDを使用
+            is_primary=True,
         )
-        db.add(association)
-        await db.flush()
+        db.add(office_staff)
+        
+        await db.commit() # トランザクションをコミット
+        await db.refresh(db_office) # 返却するオブジェクトの状態を最新化する
 
-        # コミットは呼び出し元で行うため、ここでは行わない。
-        # 返されるオブジェクトは、まだコミットされていないセッション内の状態。
         return db_office
 
     async def get_with_staff(self, db: AsyncSession, *, office_id: UUID) -> Optional[Office]:
