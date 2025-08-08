@@ -1,7 +1,8 @@
 from fastapi import APIRouter
-from .endpoints import office # auth, staff, 
+
+from app.api.v1.endpoints import offices, staffs
 
 api_router = APIRouter()
-# api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
-# api_router.include_router(staff.router, prefix="/staff", tags=["Staff"])
-api_router.include_router(office.router, prefix="/office", tags=["Offices"])  
+
+api_router.include_router(offices.router, prefix="/offices", tags=["offices"])
+api_router.include_router(staffs.router, prefix="/staffs", tags=["staffs"])
