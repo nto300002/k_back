@@ -19,6 +19,7 @@ class StaffRole(enum.Enum):
     employee = 'employee'
     manager = 'manager'
     service_administrator = 'service_administrator'
+    general_user = 'general_user' # test用のロール
 
 class OfficeType(enum.Enum):
     transition_to_employment = 'transition_to_employment'
