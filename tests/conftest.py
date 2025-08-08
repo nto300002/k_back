@@ -24,6 +24,7 @@ from asyncpg.exceptions import InvalidCatalogNameError
 from app.models.staff import Staff
 from app.models.office import Office, OfficeStaff
 from app.models.enums import StaffRole, OfficeType, BillingStatus
+from app.db.session import SessionLocal
 
 # --- 1. 【修正】DBの存在を保証するフィクスチャ (sessionスコープ) ---
 @pytest_asyncio.fixture(scope="session", autouse=True)
@@ -103,23 +104,50 @@ async def db_session(setup_test_database) -> AsyncGenerator[AsyncSession, None]:
 # --- 3. ファクトリフィクスチャ (変更なし) ---
 @pytest_asyncio.fixture
 async def service_admin_user_factory(db_session: AsyncSession):
-    async def _create_user(**kwargs) -> Staff:
-        new_user = Staff(**kwargs)
-        db_session.add(new_user)
-        await db_session.flush()
-        await db_session.refresh(new_user)
-        return new_user
-    yield _create_user
+    """
+    service_administratorロールのユーザーを作成するファクトリ。
+    db_sessionを引数で受け取れるようにする。
+    """
+    async def _create_user(
+        *,
+        # オプションの引数としてセッションを受け取る
+        session: Optional[AsyncSession] = None,
+        name: str = "テスト管理者",
+        role: StaffRole = StaffRole.service_administrator,
+        # ... 他の引数 ...
+    ):
+        # 使用するセッションを決定
+        active_session = session or db_session
+        
+        user = Staff(name=name, role=role)
+        active_session.add(user)
+        await active_session.flush()
+        return user
+    return _create_user
 
 @pytest_asyncio.fixture
 async def office_factory(db_session: AsyncSession):
-    async def _create_office(**kwargs) -> Office:
-        new_office = Office(**kwargs)
-        db_session.add(new_office)
-        await db_session.flush()
-        await db_session.refresh(new_office)
-        return new_office
-    yield _create_office
+    """
+    事業所を作成するファクトリ。
+    db_sessionを引数で受け取れるようにする。
+    """
+    async def _create_office(
+        *,
+        # オプションの引数としてセッションを受け取る
+        session: Optional[AsyncSession] = None,
+        name: str = "テスト事業所",
+        office_type: OfficeType = OfficeType.type_A_office,
+        created_by: Optional[uuid.UUID] = None,
+        last_modified_by: Optional[uuid.UUID] = None,
+    ):
+        # 使用するセッションを決定
+        active_session = session or db_session
+
+        office = Office(name=name, office_type=office_type, created_by=created_by, last_modified_by=last_modified_by)
+        active_session.add(office)
+        await active_session.flush()
+        return office
+    return _create_office
 
 
 @pytest_asyncio.fixture
@@ -194,5 +222,61 @@ def mock_current_user(request):
     # テスト後にオーバーライドをクリア
     if get_current_active_user in app.dependency_overrides:
         del app.dependency_overrides[get_current_active_user]
+
+
+@pytest_asyncio.fixture
+async def pre_existing_office_for_test(
+    # db_sessionフィクスチャを引数で受け取る
+    db_session: AsyncSession,
+    service_admin_user_factory,
+    office_factory,
+):
+    """
+    重複チェックテストのために、事前にDBにデータを投入するフィクスチャ。
+    db_sessionのトランザクション内でデータを準備し、テスト終了後には
+    db_sessionフィクスチャによってテーブルごとクリーンアップされる。
+    """
+    DUPLICATE_OFFICE_NAME = "既存の事業所"
+    OTHER_USER_NAME = "他人"
+    
+    print("\n[FIXTURE-SETUP] Creating pre-existing data within the test transaction...")
+    
+    # --- セットアップ ---
+    # db_sessionを使ってデータを準備する。ここではコミットしない。
+    other_user = await service_admin_user_factory(
+        session=db_session, name=OTHER_USER_NAME
+    )
+    await office_factory(
+        session=db_session,
+        name=DUPLICATE_OFFICE_NAME,
+        created_by=other_user.id,
+        last_modified_by=other_user.id
+    )
+    
+    # 【重要】データをセーブポイントにコミットする
+    # これにより、同じトランザクション内にあるAPIエンドポイントからデータが見えるようになる
+    await db_session.commit()
+    print(f"[FIXTURE-SETUP] Data committed to savepoint. Office: {DUPLICATE_OFFICE_NAME}")
+
+    # このyieldで、テスト本体に制御を渡し、テストが実行される
+    yield DUPLICATE_OFFICE_NAME
+
+    # --- クリーンアップ ---
+    # このフィクスチャでは、手動のクリーンアップは不要。
+    # テスト関数終了後、db_sessionフィクスチャが全体をロールバックし、
+    # 次のテストの開始時にはテーブルが再作成されるため、データは残らない。
+    print("[FIXTURE-TEARDOWN] No manual cleanup needed. Relying on db_session rollback.")
+
+
+@pytest_asyncio.fixture
+async def general_user(db_session: AsyncSession) -> Staff:
+    """
+    テスト用の一般ユーザーを作成するフィクスチャ。
+    """
+    user = Staff(name="一般ユーザー", role=StaffRole.employee)
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
 
 
