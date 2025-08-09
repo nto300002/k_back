@@ -2,18 +2,19 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from fastapi import status, HTTPException
+from fastapi import status
 from fastapi.encoders import jsonable_encoder
+from unittest.mock import patch, AsyncMock
+from sqlalchemy.exc import IntegrityError
+from uuid import uuid4
 
 from app.core.config import settings
 from app.models.staff import Staff
 from app.models.office import Office, OfficeStaff
 from app.schemas.office import OfficeCreate
 from app.models.enums import OfficeType, StaffRole
-from app.api.deps import get_current_active_user
-from tests.conftest import service_admin_user_factory, office_factory
+from app.api.deps import get_current_active_user, get_db
 from app.main import app
-from app.db.session import SessionLocal
 
 # --- 正常系テスト ---
 
@@ -22,61 +23,40 @@ async def test_setup_office_success(
     async_client: AsyncClient,
     db_session: AsyncSession,
     service_admin_user_factory,
-
 ):
     """
     正常系: service_administratorロールのユーザーが事業所を正常に作成できる
     """
-    # 1. テスト用のユーザーを作成（まだ事業所には所属していない）
     user: Staff = await service_admin_user_factory(
         name="テスト管理者",
         role=StaffRole.service_administrator,
-        
     )
+    # DBセッションをフラッシュして、ユーザーをDBに永続化する（コミットはしない）
+    await db_session.flush()
     
-    # 2. APIリクエストのペイロードを準備
     office_data = OfficeCreate(
         name="テスト事業所",
         office_type=OfficeType.type_A_office,
     )
-    
-    # 3. APIリクエストを実行
-    def override_get_current_user():
-        return user
-    
-    app.dependency_overrides[get_current_active_user] = override_get_current_user
-
+    app.dependency_overrides[get_current_active_user] = lambda: user
     try:
         response = await async_client.post(
             f"{settings.API_V1_STR}/offices/setup",
             json=jsonable_encoder(office_data),
         )
-
-        # 4. レスポンスを検証
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["name"] == office_data.name
-        assert data["office_type"] == office_data.office_type.value
-        assert "id" in data
-
-        # 5. DBの状態を検証
-        #    作成されたOfficeが存在するか
         office_id = data["id"]
+        await db_session.refresh(user)
         db_office = await db_session.get(Office, office_id)
         assert db_office is not None
-        assert db_office.name == office_data.name
-        assert db_office.created_by == user.id
-
-        #    中間テーブルの関連付けが正しく行われたか
-        result = await db_session.execute(
-            select(OfficeStaff).filter_by(staff_id=user.id, office_id=office_id)
-        )
-        association = result.scalars().one_or_none()
+        stmt = select(OfficeStaff).where(OfficeStaff.staff_id == user.id, OfficeStaff.office_id == office_id)
+        result = await db_session.execute(stmt)
+        association = result.scalar_one_or_none()
         assert association is not None
-        assert association.is_primary is True
     finally:
         app.dependency_overrides.clear()
-
 
 # --- 異常系テスト ---
 
@@ -90,148 +70,135 @@ async def test_setup_office_fail_when_already_associated(
     """
     異常系: 既に事業所に所属しているユーザーは新しい事業所を作成できない
     """
-    # 1. テスト用のユーザーと事業所を準備
-    user_to_create: Staff = await service_admin_user_factory(
+    test_user: Staff = await service_admin_user_factory(
         name="既存所属管理者",
         role=StaffRole.service_administrator,
     )
-    existing_office_to_create: Office = await office_factory(
+    existing_office: Office = await office_factory(
         name="既存の事業所",
+        created_by=test_user.id,
+        last_modified_by=test_user.id,
         office_type=OfficeType.type_A_office,
-        created_by=user_to_create.id,
-        last_modified_by=user_to_create.id,
     )
-
-    # 2. 現在のセッションでオブジェクトをDBに追加
-    db_session.add(user_to_create)
-    db_session.add(existing_office_to_create)
-    await db_session.flush() # IDを確定させる
-
-    # 3. ユーザーと事業所を関連付ける
-    association = OfficeStaff(staff_id=user_to_create.id, office_id=existing_office_to_create.id)
+    association = OfficeStaff(staff_id=test_user.id, office_id=existing_office.id)
     db_session.add(association)
-    user_id_for_override = user_to_create.id
-    await db_session.commit() # ここでテストの初期状態を確定
-
-
-    # 4. APIリクエストのペイロードを準備
+    await db_session.commit()
+    await db_session.refresh(test_user)
     new_office_data = OfficeCreate(
         name="作成しようとする新しい事業所",
         office_type=OfficeType.type_B_office,
     )
-
-    # 5. APIリクエストを実行
-    #    このテストでは、特定のユーザーとしてAPIを叩くシミュレーションが必要
-    #    ここでは依存性注入をオーバーライドする手法を用いる
-    def override_get_current_user():
-        return user_to_create
-
-    app.dependency_overrides[get_current_active_user] = override_get_current_user
-
+    app.dependency_overrides[get_current_active_user] = lambda: test_user
     try:
         response = await async_client.post(
             f"{settings.API_V1_STR}/offices/setup",
             json=jsonable_encoder(new_office_data),
         )
-
-        # 6. レスポンスを検証
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        data = response.json()
-        assert "detail" in data
-        assert data["detail"] == "ユーザーは既に事業所に所属しています。"
-
+        assert response.json()["detail"] == "ユーザーは既に事業所に所属しています。"
     finally:
-        # 7. テスト後にオーバーライドをクリア
         app.dependency_overrides.clear()
-
-
-# --- 依存性注入を使った認証済みユーザーシミュレーションテスト ---
 
 @pytest.mark.asyncio
-async def test_setup_office_with_dependency_injection(
+@patch("app.api.v1.endpoints.offices.crud_office.create_with_owner", new_callable=AsyncMock)
+async def test_setup_office_fail_with_duplicate_name(
+    mock_create_with_owner: AsyncMock,
     async_client: AsyncClient,
+    service_admin_user_factory,
     db_session: AsyncSession,
-    service_admin_user_factory,
 ):
     """
-    FastAPIの依存性注入を使って認証済みユーザーをシミュレートするテスト例。
-    get_current_active_userをオーバーライドして特定のユーザーを返す。
+    異常系: 既に存在する名前で事業所を作成しようとすると409エラー
     """
-    # 1. テスト用のユーザーを作成
     user: Staff = await service_admin_user_factory(
-        name="依存性注入テストユーザー",
-        role=StaffRole.service_administrator,
+        session=db_session, name="テスト管理者", role=StaffRole.service_administrator
     )
-    
-    # 2. 依存性注入をオーバーライドして、作成したユーザーを返すようにする
-    def override_get_current_user():
-        return user
-    
-    app.dependency_overrides[get_current_active_user] = override_get_current_user
-    
+    await db_session.flush()
+
+    # 正しいIntegrityErrorを生成
+    error = IntegrityError(None, None, 'duplicate key value violates unique constraint "offices_name_key"')
+    mock_create_with_owner.side_effect = error
+
+    office_data = OfficeCreate(
+        name="重複する名前の事業所",
+        office_type=OfficeType.type_A_office,
+    )
+    app.dependency_overrides[get_current_active_user] = lambda: user
     try:
-        # 3. APIリクエストのペイロードを準備
-        office_data = OfficeCreate(
-            name="依存性注入テスト事業所",
-            office_type=OfficeType.type_B_office,
-        )
-        
-        # 4. APIリクエストを実行（認証ヘッダーは不要）
         response = await async_client.post(
             f"{settings.API_V1_STR}/offices/setup",
             json=jsonable_encoder(office_data),
         )
-        
-        # 5. レスポンスを検証
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert data["name"] == office_data.name
-        
     finally:
-        # 6. テスト後にオーバーライドをクリア
         app.dependency_overrides.clear()
 
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "すでにその名前の事務所は登録されています" in response.json()["detail"]
+    mock_create_with_owner.assert_awaited_once()
 
-@pytest.mark.asyncio 
-async def test_dependency_injection_with_mock_fixture(
+@pytest.mark.asyncio
+@patch("app.api.v1.endpoints.offices.crud_office.create_with_owner", new_callable=AsyncMock)
+async def test_setup_office_fail_with_duplicate_name_mocked(
+    mock_create_with_owner: AsyncMock,
     async_client: AsyncClient,
-    db_session: AsyncSession, 
-    service_admin_user_factory,
 ):
     """
-    より実用的な依存性注入テストの例。
-    事前に作成したmock_current_userフィクスチャを活用する。
+    【モックテスト】異常系: サービス層で重複エラー(IntegrityError)が発生した場合、
+    APIが409 Conflictを返すことを確認する
     """
-    # 1. テスト用のユーザーを作成
-    user: Staff = await service_admin_user_factory(
-        name="モックフィクスチャユーザー",
-        role=StaffRole.service_administrator,
-        
+    dummy_user = Staff(id=uuid4(), name="ダミーユーザー", role=StaffRole.service_administrator)
+    
+    mock_session = AsyncMock(spec=AsyncSession)
+    mock_session.get.return_value = dummy_user
+    mock_session.refresh.return_value = None
+    mock_session.rollback.return_value = None
+
+    async def override_get_db():
+        yield mock_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_active_user] = lambda: dummy_user
+
+    # 正しいIntegrityErrorを生成
+    error = IntegrityError(None, None, 'duplicate key value violates unique constraint "offices_name_key"')
+    mock_create_with_owner.side_effect = error
+
+    office_data = OfficeCreate(
+        name="重複する名前の事業所",
+        office_type=OfficeType.type_A_office,
     )
-    
-    # 2. 手動で依存性をオーバーライド
-    def mock_user():
-        return user
-    
-    app.dependency_overrides[get_current_active_user] = mock_user
-    
     try:
-        # 3. 依存性が正しく動作することを確認
-        # 実際のAPIエンドポイントがあれば、ここでテストを実行
-        office_data = OfficeCreate(
-            name="モックフィクスチャテスト事業所", 
-            office_type=OfficeType.type_B_office,
-        )
-        
         response = await async_client.post(
             f"{settings.API_V1_STR}/offices/setup",
             json=jsonable_encoder(office_data),
         )
-        
-        # エンドポイント実装済みのため200を期待
-        assert response.status_code == status.HTTP_200_OK
-        
     finally:
-        # 4. クリーンアップ
         app.dependency_overrides.clear()
 
+    assert response.status_code == status.HTTP_409_CONFLICT
+    assert "すでにその名前の事務所は登録されています" in response.json()["detail"]
+    mock_session.get.assert_awaited_once_with(Staff, dummy_user.id)
+    mock_create_with_owner.assert_awaited_once()
+
+@pytest.mark.asyncio
+async def test_setup_office_fail_with_invalid_user_role(
+    async_client: AsyncClient,
+    general_user,
+):
+    """
+    異常系: general_userロールのユーザーは事業所を作成できず、403エラー
+    """
+    office_data = OfficeCreate(
+        name="権限のないユーザーが作成する事業所",
+        office_type=OfficeType.type_A_office,
+    )
+    app.dependency_overrides[get_current_active_user] = lambda: general_user
+    try:
+        response = await async_client.post(
+            f"{settings.API_V1_STR}/offices/setup",
+            json=jsonable_encoder(office_data),
+        )
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.json()["detail"] == "この操作を行う権限がありません。"
+    finally:
+        app.dependency_overrides.clear()

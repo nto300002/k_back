@@ -20,28 +20,23 @@ async def test_create_office_with_owner(db_session: AsyncSession, service_admin_
         db=db_session, obj_in=office_in, user=owner
     )
 
-    assert db_office is not None
-    assert db_office.name == office_in.name
-    assert db_office.office_type == office_in.office_type
-    assert db_office.created_by == owner.id
-
+    # 5. DBから作成されたレコードを再取得して検証
+    await db_session.refresh(owner) # ownerオブジェクトのセッション状態を更新
     created_office = await db_session.get(Office, db_office.id)
-    assert created_office is not None
 
-    # OfficeStaff（中間テーブル）レコードが作成されたか検証
+    assert created_office is not None
+    assert created_office.name == office_in.name
+    assert created_office.office_type == office_in.office_type
+    assert created_office.created_by == owner.id
+
+    # 6. OfficeStaff（中間テーブル）レコードが作成されたか検証
     stmt = (
-        select(Office)
-        .where(Office.id == db_office.id)
-        .options(selectinload(Office.staff_associations))
+        select(OfficeStaff)
+        .where(OfficeStaff.office_id == created_office.id)
+        .where(OfficeStaff.staff_id == owner.id)
     )
     result = await db_session.execute(stmt)
-    office_from_db = result.scalar_one_or_none()
+    association_from_db = result.scalar_one_or_none()
 
-    # OfficeがDBに存在し、関連(staff_associations)が1件存在することを確認
-    assert office_from_db is not None
-    assert len(office_from_db.staff_associations) == 1
-
-    # 関連レコード(OfficeStaff)の内容を検証
-    association_from_db = office_from_db.staff_associations[0]
-    assert association_from_db.staff_id == owner.id
+    assert association_from_db is not None
     assert association_from_db.is_primary is True
