@@ -1,3 +1,7 @@
 fastapi
 gunicorn
 uvicorn
+gotrue
+pydantic-settings
+passlib
+python-jose

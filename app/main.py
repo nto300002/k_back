@@ -1,17 +1,24 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1.endpoints import office
+from app.api.v1 import api
+from app.core.config import settings
 
-app = FastAPI()
+# FastAPIアプリケーションを初期化
+app = FastAPI(
+    title=settings.PROJECT_NAME,
+    openapi_url=f"{settings.API_V1_STR}/openapi.json"
+)
 
-app.include_router(office.router, prefix="/api/v1/offices", tags=["offices"])
+# CORSミドルウェアの設定
+if settings.BACKEND_CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-
-@app.get("/")
-def read_root():
-    return {"message": "Hello from k_back API"}
-
-
-@app.get("/api/v1/items/{item_id}")
-def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}
+# APIルーターをインクルード
+app.include_router(api.api_router, prefix=settings.API_V1_STR)
